@@ -1,0 +1,59 @@
+# ─────────────────────────────────────────────
+#  requirements.txt — FastAPI Project
+# ─────────────────────────────────────────────
+
+# ── API Framework ────────────────────────────
+fastapi==0.111.0
+uvicorn[standard]==0.29.0
+pydantic==2.7.1
+pydantic-settings==2.2.1
+python-multipart==0.0.9       # upload de fichiers
+
+# ── HTTP Client (requests / responses) ───────
+httpx==0.27.0                 # async HTTP client (aussi utilisé par TestClient)
+requests==2.31.0              # HTTP client synchrone
+
+# ── ORM & Base de données ────────────────────
+sqlalchemy==2.0.30            # ORM principal
+alembic==1.13.1               # migrations DB
+psycopg2-binary==2.9.9        # driver PostgreSQL
+
+# ── pgvector (embeddings dans PostgreSQL) ────
+pgvector==0.2.5               # extension vectorielle pour PostgreSQL
+
+# ── PDF ──────────────────────────────────────
+pypdf==4.2.0                  # lecture / écriture / merge PDF
+pdfplumber==0.11.0            # extraction texte & tableaux
+reportlab==4.2.0              # création de PDF
+
+# ── Word / DOCX ──────────────────────────────
+python-docx==1.1.2            # lecture et création de fichiers .docx
+
+# ── Machine Learning (scikit-learn) ──────────
+scikit-learn==1.4.2           # ML classique (classification, clustering…)
+numpy==1.26.4
+pandas==2.2.2
+
+# ── Embeddings (NLP) ─────────────────────────
+sentence-transformers==3.0.1  # génération d'embeddings texte
+torch==2.3.0                  # backend PyTorch (requis par sentence-transformers)
+
+# ── SharePoint / Office 365 ──────────────────
+Office365-REST-Python-Client==2.5.9   # API SharePoint & OneDrive
+
+# ── Jira ─────────────────────────────────────
+jira==3.8.0                   # API Jira (issues, projets, sprints…)
+
+# ── Configuration ────────────────────────────
+python-dotenv==1.0.1          # chargement du fichier .env
+
+# ── Authentification & Sécurité ──────────────
+python-jose[cryptography]==3.3.0   # JWT
+passlib[bcrypt]==1.7.4             # hashage mot de passe
+
+# ── Logs ─────────────────────────────────────
+loguru==0.7.2                 # logging moderne et coloré
+
+# ── Tests ────────────────────────────────────
+pytest==8.2.0
+pytest-asyncio==0.23.6
