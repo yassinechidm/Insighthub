@@ -17,6 +17,7 @@ requests==2.31.0              # HTTP client synchrone
 sqlalchemy==2.0.30            # ORM principal
 alembic==1.13.1               # migrations DB
 psycopg2-binary==2.9.9        # driver PostgreSQL
+asyncpg==0.29.0               # driver PostgreSQL async (SQLAlchemy)
 
 # ── pgvector (embeddings dans PostgreSQL) ────
 pgvector==0.2.5               # extension vectorielle pour PostgreSQL
