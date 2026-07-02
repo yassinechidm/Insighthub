@@ -54,3 +54,24 @@ class SyncResult:
     total_documents: int = 0
     total_chunks: int = 0
     error_message: Optional[str] = None
+
+@dataclass
+class SearchResult:
+    """Un chunk trouvé par la recherche sémantique."""
+    chunk_id:    str
+    source_type: str
+    document_id: str
+    content:     str
+    title:       str
+    similarity:  float
+    metadata:    dict = field(default_factory=dict)
+
+
+@dataclass
+class RAGResponse:
+    """Réponse complète du pipeline RAG."""
+    question:    str
+    answer:      str
+    sources:     list
+    model:       str
+    total_chunks_searched: int

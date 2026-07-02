@@ -1,3 +1,5 @@
+import logging
+import traceback
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException
@@ -7,26 +9,40 @@ from app.connectors.jira.pipeline import JiraConnector
 from app.connectors.jira.transformer import JiraTransformer
 from app.connectors.sharepoint.pipeline import SharePointConnector
 from app.connectors.sharepoint.transformer import SharePointTransformer
+# from app.connectors.servicenow.pipeline import ServiceNowConnector
+# from app.connectors.servicenow.transformer import ServiceNowTransformer
 from app.db.vector_store import VectorStore
 from app.ingestion.embeddings.embedder import Embedder
 from app.ingestion.pipeline import IngestionPipeline
+from app.rag.retriever import Retriever
+from app.rag.generator import Generator
 
+logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
+# ── Modèles Pydantic ──────────────────────────────────────────────────
+
 class SyncRequest(BaseModel):
-    project_key: Optional[str] = None
-    list_title: Optional[str] = None
+    project_key:   Optional[str] = None
+    list_title:    Optional[str] = None
+    table:         Optional[str] = None
     updated_after: Optional[str] = None
 
 
-# Registre des sources disponibles : source_type -> factory de pipeline.
-# Ajouter une source = ajouter une entrée ici, rien d'autre à changer
-# dans ce fichier (Open/Closed Principle).
+class SearchRequest(BaseModel):
+    question:       str
+    source:         Optional[str]   = None
+    top_k:          Optional[int]   = None
+    min_similarity: Optional[float] = None
+    generate:       bool            = True
+
+
+# ── Factories pipelines ───────────────────────────────────────────────
+
 def _build_jira_pipeline(request: SyncRequest) -> IngestionPipeline:
-    connector = JiraConnector(project_key=request.project_key)
     return IngestionPipeline(
-        connector=connector,
+        connector=JiraConnector(project_key=request.project_key),
         transformer=JiraTransformer(),
         embedder=Embedder(),
         store=VectorStore(),
@@ -34,51 +50,120 @@ def _build_jira_pipeline(request: SyncRequest) -> IngestionPipeline:
 
 
 def _build_sharepoint_pipeline(request: SyncRequest) -> IngestionPipeline:
-    connector = SharePointConnector(list_title=request.list_title)
     return IngestionPipeline(
-        connector=connector,
+        connector=SharePointConnector(list_title=request.list_title),
         transformer=SharePointTransformer(),
         embedder=Embedder(),
         store=VectorStore(),
     )
 
 
+def _build_servicenow_pipeline(request: SyncRequest) -> IngestionPipeline:
+    return IngestionPipeline(
+        connector=ServiceNowConnector(table=request.table),
+        transformer=ServiceNowTransformer(),
+        embedder=Embedder(),
+        store=VectorStore(),
+    )
+
+
+# Ajouter une source = ajouter une entrée ici (Open/Closed Principle)
 PIPELINE_FACTORIES = {
-    "jira": _build_jira_pipeline,
-    "sharepoint": _build_sharepoint_pipeline,
+    "jira":        _build_jira_pipeline,
+    "sharepoint":  _build_sharepoint_pipeline,
+    "servicenow":  _build_servicenow_pipeline,
 }
 
+
+# ── Endpoints ─────────────────────────────────────────────────────────
 
 @router.get("/health")
 async def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
-@router.post("/ingestion/{source}/sync")
+@router.post("/ingestion/{source}/sync", summary="Synchroniser une source")
 async def sync_source(source: str, request: SyncRequest) -> dict:
+    """
+    Lance le pipeline d ingestion pour la source donnée.
+    Sources disponibles : jira | sharepoint | servicenow
+    """
     factory = PIPELINE_FACTORIES.get(source)
     if factory is None:
         raise HTTPException(
             status_code=404,
-            detail=f"Source inconnue : '{source}'. Sources disponibles : {list(PIPELINE_FACTORIES)}",
+            detail=f"Source inconnue : '{source}'. "
+                   f"Disponibles : {list(PIPELINE_FACTORIES)}",
         )
 
     try:
         pipeline = factory(request)
-        result = await pipeline.run(since=request.updated_after)
+        result   = await pipeline.run(since=request.updated_after)
     except ValueError as exc:
-        # ex: aucun project_key configuré pour Jira
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
+        traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
     if not result.success:
         raise HTTPException(status_code=502, detail=result.error_message)
 
     return {
-        "status": "ok",
-        "source": source,
+        "status":              "ok",
+        "source":              source,
         "documents_processed": result.total_documents,
-        "chunks_created": result.total_chunks,
-        "total_fetched": result.total_fetched,
+        "chunks_created":      result.total_chunks,
+        "total_fetched":       result.total_fetched,
     }
+
+
+@router.post("/search", summary="Recherche sémantique RAG")
+async def search(request: SearchRequest) -> dict:
+    """
+    Pipeline RAG complet :
+    1. Embed la question avec le même modèle que l ingestion
+    2. Cherche les chunks similaires dans pgvector (toutes sources ou filtrée)
+    3. Génère une réponse avec Groq LLM (si generate=True)
+    """
+    try:
+        # 1. Retrieval
+        retriever = Retriever()
+        chunks    = retriever.search(
+            query          = request.question,
+            source         = request.source,
+            top_k          = request.top_k,
+            min_similarity = request.min_similarity,
+        )
+
+        # 2. Retrieval only (sans génération LLM)
+        if not request.generate:
+            return {
+                "question": request.question,
+                "chunks": [
+                    {
+                        "chunk_id":    c.chunk_id,
+                        "source_type": c.source_type,
+                        "document_id": c.document_id,
+                        "title":       c.title,
+                        "similarity":  c.similarity,
+                        "content":     c.content[:300],
+                    }
+                    for c in chunks
+                ],
+            }
+
+        # 3. RAG complet avec génération
+        generator = Generator()
+        response  = generator.generate(request.question, chunks)
+
+        return {
+            "question":             response.question,
+            "answer":               response.answer,
+            "model":                response.model,
+            "sources":              response.sources,
+            "total_chunks_searched": response.total_chunks_searched,
+        }
+
+    except Exception as exc:
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
