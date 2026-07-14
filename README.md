@@ -214,3 +214,6 @@ uvicorn main:app --reload
 - Le routeur par règles (`Rule Router`) reste sensible aux variantes lexicales et à la langue de la question.
 - Le reranking cross-encoder, bien que plus précis, ajoute une latence supplémentaire — appliqué uniquement sur un nombre restreint de candidats pour limiter son impact.
 - Le module NL2SQL présente des limitations propres, documentées séparément dans `app/nl2sql/`.
+
+bonjours
+bonjours
