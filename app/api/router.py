@@ -3,8 +3,9 @@ import time
 import traceback
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.connectors.jira.pipeline import JiraConnector
 from app.connectors.jira.transformer import JiraTransformer
@@ -14,14 +15,23 @@ from app.connectors.confluence.pipeline import ConfluenceConnector
 from app.connectors.confluence.transformer import ConfluenceTransformer
 from app.connectors.servicenow.pipeline import ServiceNowConnector
 from app.connectors.servicenow.transformer import ServiceNowTransformer
+from app.db.database import get_db
 from app.db.vector_store import VectorStore
 from app.ingestion.embeddings.embedder import Embedder
 from app.ingestion.pipeline import IngestionPipeline
-from app.rag.retriever import Retriever
-from app.rag.generator import Generator
+from app.rag.orchestrator import Orchestrator
+from app.nl2sql.factory import build_nl2sql_agent
+from app.nl2sql.query_logger import QueryLogger
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+
+# Instance unique réutilisée entre les requêtes — évite de recréer les
+# composants (routers, reranker, generator) à chaque appel. Les modèles
+# lourds (embedder, cross-encoder) restent chargés une seule fois en
+# mémoire grâce au lazy loading déjà en place dans chaque module.
+_orchestrator = Orchestrator()
+_query_logger = QueryLogger()
 
 
 class SyncRequest(BaseModel):
@@ -32,11 +42,8 @@ class SyncRequest(BaseModel):
 
 
 class SearchRequest(BaseModel):
-    question:       str
-    source:         Optional[str]   = None
-    top_k:          Optional[int]   = None
-    min_similarity: Optional[float] = None
-    generate:       bool            = True
+    question: str
+    user_id:  Optional[str] = None
 
 
 def _build_jira_pipeline(request: SyncRequest) -> IngestionPipeline:
@@ -109,45 +116,16 @@ async def sync_source(source: str, request: SyncRequest) -> dict:
     }
 
 
-@router.post("/search", summary="Recherche sémantique RAG")
+@router.post("/search", summary="Recherche RAG (pipeline orchestrateur complet)")
 async def search(request: SearchRequest) -> dict:
     t_start = time.time()
 
     try:
-        retriever   = Retriever()
-        chunks      = retriever.search(
-            query          = request.question,
-            source         = request.source,
-            top_k          = request.top_k,
-            min_similarity = request.min_similarity,
+        response = await _orchestrator.ask(
+            question = request.question,
+            user_id  = request.user_id,
         )
-        t_retrieval = time.time() - t_start
-
-        if not request.generate:
-            return {
-                "question": request.question,
-                "chunks":   [
-                    {
-                        "chunk_id":    c.chunk_id,
-                        "source_type": c.source_type,
-                        "document_id": c.document_id,
-                        "title":       c.title,
-                        "similarity":  c.similarity,
-                        "content":     c.content[:300],
-                    }
-                    for c in chunks
-                ],
-                "performance": {
-                    "retrieval_ms": round(t_retrieval * 1000, 1),
-                    "chunks_found": len(chunks),
-                },
-            }
-
-        t_gen_start = time.time()
-        generator   = Generator()
-        response    = generator.generate(request.question, chunks)
-        t_gen       = time.time() - t_gen_start
-        t_total     = time.time() - t_start
+        t_total = time.time() - t_start
 
         return {
             "question":              response.question,
@@ -156,12 +134,55 @@ async def search(request: SearchRequest) -> dict:
             "sources":               response.sources,
             "total_chunks_searched": response.total_chunks_searched,
             "performance": {
-                "retrieval_ms":  round(t_retrieval * 1000, 1),
-                "generation_ms": round(t_gen * 1000, 1),
-                "total_ms":      round(t_total * 1000, 1),
+                "total_ms": round(t_total * 1000, 1),
             },
         }
 
+    except Exception as exc:
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+# ==================================================================
+# NL2SQL — administration et monitoring
+# ==================================================================
+
+@router.post("/nl2sql/rescan-schema", summary="Force un re-scan du schéma cible")
+async def rescan_nl2sql_schema() -> dict:
+    agent = build_nl2sql_agent()
+    try:
+        schema = await agent.rescan_schema()
+        return {
+            "status":          "ok",
+            "connection_id":   schema.connection_id,
+            "engine_dialect":  schema.engine_dialect,
+            "tables_scanned":  len(schema.tables),
+            "scanned_at":      schema.scanned_at,
+        }
+    except Exception as exc:
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@router.get("/nl2sql/monitoring/stats", summary="Stats dashboard SQL Monitoring")
+async def nl2sql_monitoring_stats(
+    since_days: int = 30,
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    try:
+        return await _query_logger.get_stats(db, since_days=since_days)
+    except Exception as exc:
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@router.get("/nl2sql/monitoring/queries", summary="Requêtes NL2SQL récentes")
+async def nl2sql_monitoring_queries(
+    limit: int = 50,
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    try:
+        return {"queries": await _query_logger.get_recent(db, limit=limit)}
     except Exception as exc:
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(exc)) from exc
