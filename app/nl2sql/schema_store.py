@@ -135,7 +135,10 @@ class SchemaStore:
 
     @staticmethod
     def _deserialize(row) -> SchemaScanResult:
-        raw_tables = json.loads(row["schema_json"])
+        # asyncpg désérialise automatiquement les colonnes jsonb en objets Python
+        # (list/dict) — json.loads échouerait sur une list. On gère les deux cas.
+        raw_json = row["schema_json"]
+        raw_tables = raw_json if isinstance(raw_json, list) else json.loads(raw_json)
         tables = [
             TableInfo(
                 name=t["name"],

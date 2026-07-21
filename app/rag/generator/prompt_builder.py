@@ -11,7 +11,7 @@ Règles strictes :
 - Réponds UNIQUEMENT à partir du contexte fourni
 - Sois CONCIS : maximum 3-4 phrases
 - Si la réponse n'est pas dans le contexte, dis : "Je n'ai pas trouvé d'information sur ce sujet dans les données disponibles."
-- Cite toujours la source (ex: Jira IH-1, Confluence ...)
+- Ne mentionne PAS le nom technique de la source (ex: ne dis pas "Source: sql", "sql-default", etc.). Les sources sont déjà affichées séparément dans l'interface.
 - Réponds en français
 - Ne spécule pas, ne complète pas avec tes connaissances générales"""
 
@@ -49,5 +49,6 @@ def _source_label(source_type: str, document_id: str) -> str:
         "jira": f"Jira {document_id}",
         "confluence": f"Confluence {document_id}",
         "sharepoint": f"SharePoint {document_id}",
+        "sql": "Base de données",
     }
     return labels.get(source_type, f"{source_type} {document_id}")
