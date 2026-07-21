@@ -13,6 +13,8 @@ from app.connectors.sharepoint.pipeline import SharePointConnector
 from app.connectors.sharepoint.transformer import SharePointTransformer
 from app.connectors.confluence.pipeline import ConfluenceConnector
 from app.connectors.confluence.transformer import ConfluenceTransformer
+from app.connectors.servicenow.pipeline import ServiceNowConnector
+from app.connectors.servicenow.transformer import ServiceNowTransformer
 from app.db.database import get_db
 from app.db.vector_store import VectorStore
 from app.ingestion.embeddings.embedder import Embedder
